@@ -76,6 +76,28 @@ resource "aws_autoscaling_group" "example" {
   }
 }
 
+resource "aws_autoscaling_schedule" "scale_out_during_business_hours" {
+  count = var.enable_autoscaling ? 1 : 0
+
+  scheduled_action_name  = "${var.cluster_name}-scale-out-during-business-hours"
+  min_size               = var.min_size
+  max_size               = var.max_size
+  desired_capacity       = var.max_size
+  recurrence             = "0 9 * * *"
+  autoscaling_group_name = aws_autoscaling_group.example.name
+}
+
+resource "aws_autoscaling_schedule" "scale_in_at_night" {
+  count = var.enable_autoscaling ? 1 : 0
+
+  scheduled_action_name  = "${var.cluster_name}-scale-in-at-night"
+  min_size               = var.min_size
+  max_size               = var.max_size
+  desired_capacity       = var.min_size
+  recurrence             = "0 17 * * *"
+  autoscaling_group_name = aws_autoscaling_group.example.name
+}
+
 resource "aws_security_group" "instance" {
   name = "${var.cluster_name}-instance"
 }
@@ -170,4 +192,41 @@ resource "aws_lb_listener_rule" "asg" {
     type             = "forward"
     target_group_arn = aws_lb_target_group.asg.arn
   }
+}
+
+resource "aws_cloudwatch_metric_alarm" "high_cpu_utilization" {
+  alarm_name  = "${var.cluster_name}-high-cpu-utilization"
+  namespace   = "AWS/EC2"
+  metric_name = "CPUUtilization"
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.example.name
+  }
+
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  period              = 300
+  statistic           = "Average"
+  threshold           = 90
+  unit                = "Percent"
+}
+
+resource "aws_cloudwatch_metric_alarm" "low_cpu_credit_balance" {
+  # Only activate this on instance of type txxx
+  count = format("%.1s", var.instance_type) == "t" ? 1 : 0
+
+  alarm_name  = "${var.cluster_name}-low-cpu-credit-balance"
+  namespace   = "AWS/EC2"
+  metric_name = "CPUCreditBalance"
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.example.name
+  }
+
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 1
+  period              = 300
+  statistic           = "Minimum"
+  threshold           = 10
+  unit                = "Count"
 }
