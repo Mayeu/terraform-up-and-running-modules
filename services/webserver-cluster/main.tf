@@ -34,7 +34,7 @@ data "aws_subnet_ids" "default" {
 }
 
 data "template_file" "user_data" {
-  count = var.enable_new_user_data ? 0 : 1
+  #count = var.enable_new_user_data ? 0 : 1
 
   template = file("user-data.sh")
 
@@ -42,18 +42,19 @@ data "template_file" "user_data" {
     server_port = var.server_port
     db_address  = data.terraform_remote_state.db.outputs.address
     db_port     = data.terraform_remote_state.db.outputs.port
+    server_text = var.server_text
   }
 }
 
-data "template_file" "user_data_new" {
-  count = var.enable_new_user_data ? 1 : 0
-
-  template = file("user-data-new.sh")
-
-  vars = {
-    server_port = var.server_port
-  }
-}
+#data "template_file" "user_data_new" {
+#  count = var.enable_new_user_data ? 1 : 0
+#
+#  template = file("user-data-new.sh")
+#
+#  vars = {
+#    server_port = var.server_port
+#  }
+#}
 
 resource "aws_launch_configuration" "example" {
   image_id        = "ami-0c55b159cbfafe1f0"
@@ -63,14 +64,19 @@ resource "aws_launch_configuration" "example" {
   # This uses the fact that the user_data are now list, so if
   # template_file.user_data have a lenght of 0, it means that we should use the
   # user_data_new template instead
-  user_data = (
-    length(data.template_file.user_data[*]) > 0
-    ? data.template_file.user_data[0].rendered
-    : data.template_file.user_data_new[0].rendered
-  )
+  #user_data = (
+  #  length(data.template_file.user_data[*]) > 0
+  #  ? data.template_file.user_data[0].rendered
+  #  : data.template_file.user_data_new[0].rendered
+  #)
+  user_data = data.template_file.user_data.rendered
 }
 
 resource "aws_autoscaling_group" "example" {
+  # Explicitly depend on the launch configuration's name so each time it's
+  # replaced, this ASG is also replaced
+  name = "${var.cluster_name}-${aws_launch_configuration.example.name}"
+
   launch_configuration = aws_launch_configuration.example.name
   vpc_zone_identifier  = data.aws_subnet_ids.default.ids
   target_group_arns    = [aws_lb_target_group.asg.arn]
@@ -78,6 +84,16 @@ resource "aws_autoscaling_group" "example" {
 
   min_size = var.min_size
   max_size = var.max_size
+
+  # Wait for at least this many instances to pass health check before
+  # considering the ASG deployment complet
+  min_elb_capacity = var.min_size
+
+  # When replacing this ASG, create the replacement first, and only delete the
+  # original after
+  lifecycle {
+    create_before_destroy = true
+  }
 
   tag {
     key                 = "Name"
